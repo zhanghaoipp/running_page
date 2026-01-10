@@ -98,7 +98,7 @@ jobs:
       - name: Run sync Nike to Strava(Run with nike data backup and show with strava)
         if: env.RUN_TYPE == 'nike_to_strava'
         run: |
-          python run_page/nike_to_strava_sync.py ${{ secrets.NIKE_REFRESH_TOKEN }} ${{ secrets.STRAVA_CLIENT_ID }} ${{ secrets.STRAVA_CLIENT_SECRET }} ${{ secrets.STRAVA_CLIENT_REFRESH_TOKEN }}
+          python run_page/nike_to_strava_sync.py ${{ secrets.NIKE_REFRESH_TOKEN }} ${{ secrets.STRAVA_CLIENT_ID }} ${{ secrets.STRAVA_CLIENT_SECRET }} ${{ secrets.STRAVA_REFRESH_TOKEN }}
 
       - name: Run sync Keep script
         if: env.RUN_TYPE == 'keep'
