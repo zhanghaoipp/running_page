@@ -9,6 +9,7 @@ import SVGStat from '@/components/SVGStat';
 import YearsStat from '@/components/YearsStat';
 import useActivities from '@/hooks/useActivities';
 import useSiteMetadata from '@/hooks/useSiteMetadata';
+import activitiesData from '@/static/activities.json';
 import { useInterval } from '@/hooks/useInterval';
 import { IS_CHINESE } from '@/utils/const';
 import {
@@ -415,6 +416,7 @@ const Index = () => {
           setViewState={setViewState}
           changeYear={changeYear}
           thisYear={year}
+          activities={activitiesData}
           animationTrigger={animationTrigger}
         />
         {year === 'Total' ? (

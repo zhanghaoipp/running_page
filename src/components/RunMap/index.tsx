@@ -1,52 +1,71 @@
 // src/components/RunMap/index.tsx
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { FeatureCollection } from 'geojson';
 import { RPGeometry } from '@/static/run_countries';
-import styles from './style.module.css';
 
 interface IRunMapProps {
   title: string;
   geoData: FeatureCollection<RPGeometry>;
   thisYear: string;
-  // 其他 props 在高德方案中暂不使用，但保留接口兼容
-  viewState?: any;
-  setViewState?: any;
-  changeYear?: (year: string) => void;
-  animationTrigger?: number;
+  activities: Array<{
+    start_latlng?: [number, number];
+    distance: number;
+    start_date: string;
+  }>;
 }
 
 const RunMap = ({
   title,
   geoData,
   thisYear,
+  activities,
 }: IRunMapProps) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
+  const heatmapRef = useRef<any>(null);
+  const [lightsOn, setLightsOn] = useState(false); // 日夜模式状态
 
-  // 高德 Key（请替换为你自己的）
   const AMAP_KEY = 'aafd2d080cfdafafc41ec39d3ba4a458';
 
-  // 解码 GeoJSON LineString 为 [lng, lat] 数组
+  // 提取轨迹坐标
   const extractCoordinates = (geoData: FeatureCollection<RPGeometry>) => {
     const coords: [number, number][][] = [];
     geoData.features.forEach((feature) => {
       if (feature.geometry.type === 'LineString') {
-        // 原数据是 [lon, lat]，高德也是 [lng, lat]，顺序一致
         coords.push(feature.geometry.coordinates as [number, number][]);
       }
     });
     return coords;
   };
 
+  // 生成热力图数据（仅当前年份）
+  const generateHeatmapData = () => {
+    const currentYear = new Date().getFullYear();
+    const points: { lng: number; lat: number; count: number }[] = [];
+
+    activities.forEach((act) => {
+      if (!act.start_latlng) return;
+      const [lat, lng] = act.start_latlng;
+      const actYear = new Date(act.start_date).getFullYear();
+      if (actYear === Number(thisYear)) {
+        points.push({
+          lng,
+          lat,
+          count: Math.min(act.distance / 1000, 20), // 距离转权重（km）
+        });
+      }
+    });
+    return points;
+  };
+
   useEffect(() => {
     if (!mapRef.current || !AMAP_KEY) return;
 
-    // 动态加载高德 JS API
     const scriptId = 'amap-script';
     if (!document.getElementById(scriptId)) {
       const script = document.createElement('script');
-      script.id = scriptId;
-      script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}`;
+      // 注意：加载 Heatmap 插件
+      script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}&plugin=AMap.Heatmap`;
       script.onload = initMap;
       document.head.appendChild(script);
     } else {
@@ -54,38 +73,24 @@ const RunMap = ({
     }
 
     function initMap() {
-      if (mapInstanceRef.current) return; // 防止重复初始化
+      if (mapInstanceRef.current) return;
 
-      // 默认中心点（北京）
-      const defaultCenter: [number, number] = [116.397428, 39.90923];
+      const defaultCenter: [number, number] = [116.4, 39.9];
       let allPoints: [number, number][] = [];
 
-      // 提取所有轨迹点
       const tracks = extractCoordinates(geoData);
-      tracks.forEach(track => {
-        allPoints = allPoints.concat(track);
-      });
+      tracks.forEach(track => allPoints = allPoints.concat(track));
 
-      // 计算最佳中心和缩放
-      let center: [number, number] = defaultCenter;
+      let center = defaultCenter;
       let zoom = 10;
       if (allPoints.length > 0) {
         const lats = allPoints.map(p => p[1]);
         const lngs = allPoints.map(p => p[0]);
-        const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-        const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-        center = [(minLng + maxLng) / 2, (minLat + maxLat) / 2];
-        // 简单估算缩放级别（可根据需求调整）
-        const latDiff = maxLat - minLat;
-        const lngDiff = maxLng - minLng;
-        const maxDiff = Math.max(latDiff, lngDiff);
-        if (maxDiff < 0.01) zoom = 16;
-        else if (maxDiff < 0.1) zoom = 13;
-        else if (maxDiff < 1) zoom = 10;
-        else zoom = 7;
+        center = [(Math.min(...lngs) + Math.max(...lngs)) / 2, (Math.min(...lats) + Math.max(...lats)) / 2];
+        const maxDiff = Math.max(Math.max(...lngs) - Math.min(...lngs), Math.max(...lats) - Math.min(...lats));
+        zoom = maxDiff < 0.01 ? 16 : maxDiff < 0.1 ? 13 : maxDiff < 1 ? 10 : 7;
       }
 
-      // 初始化地图
       const map = new (window as any).AMap.Map(mapRef.current, {
         zoom,
         center,
@@ -93,56 +98,108 @@ const RunMap = ({
       });
       mapInstanceRef.current = map;
 
-      // 添加轨迹线
-      tracks.forEach((points, idx) => {
+      // 绘制轨迹线
+      tracks.forEach(points => {
         const polyline = new (window as any).AMap.Polyline({
           path: points,
-          strokeColor: '#3b82f6',
+          strokeColor: lightsOn ? '#3b82f6' : '#555',
           strokeOpacity: 0.6,
           strokeWeight: 4,
-          zIndex: 10,
         });
         map.add(polyline);
       });
 
-      // 自动缩放包含所有轨迹（如果有点）
-      if (allPoints.length > 0) {
-        map.setFitView(undefined, false, [50, 50, 50, 50]); // 内边距
+      // 绘制热力图
+      const heatmapPoints = generateHeatmapData();
+      if (heatmapPoints.length > 0) {
+        const heatmap = new (window as any).AMap.Heatmap(map, {
+          radius: 25,
+          opacity: [0, 0.8],
+          gradient: {
+            0.4: 'blue',
+            0.6: 'cyan',
+            0.7: 'lime',
+            0.8: 'yellow',
+            1.0: 'red'
+          }
+        });
+        heatmap.setDataSet({
+          data: heatmapPoints,
+          max: 20
+        });
+        heatmapRef.current = heatmap;
       }
     }
 
     return () => {
-      // 清理（可选）
       if (mapInstanceRef.current) {
         mapInstanceRef.current.destroy();
         mapInstanceRef.current = null;
       }
     };
-  }, [geoData, AMAP_KEY]);
+  }, [geoData, activities, thisYear, lightsOn, AMAP_KEY]);
+
+  // 切换日夜模式
+  const toggleLights = () => {
+    setLightsOn(!lightsOn);
+    // 重新初始化地图（简单方案）
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.destroy();
+      mapInstanceRef.current = null;
+    }
+  };
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '600px' }}>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
-      <div className={styles.runTitle}>{title}</div>
-      {/* 简化版年份切换（可点击） */}
-      <div
-        style={{
-          position: 'absolute',
-          top: '10px',
-          right: '10px',
-          background: 'rgba(255,255,255,0.8)',
-          padding: '4px 8px',
-          borderRadius: '4px',
-          fontSize: '14px',
-          cursor: 'pointer',
-        }}
-        onClick={() => {
-          // 如果有 changeYear 回调，可扩展
-          console.log('Current year:', thisYear);
-        }}
-      >
+      
+      {/* 标题 */}
+      <div style={{
+        position: 'absolute',
+        top: '10px',
+        left: '10px',
+        background: 'rgba(255,255,255,0.8)',
+        padding: '4px 8px',
+        borderRadius: '4px',
+        fontSize: '14px',
+        zIndex: 10
+      }}>
+        {title}
+      </div>
+
+      {/* 年份 */}
+      <div style={{
+        position: 'absolute',
+        top: '10px',
+        right: '10px',
+        background: 'rgba(255,255,255,0.8)',
+        padding: '4px 8px',
+        borderRadius: '4px',
+        fontSize: '14px',
+        zIndex: 10
+      }}>
         {thisYear}
       </div>
+
+      {/* 日夜切换按钮 */}
+      <button
+        onClick={toggleLights}
+        style={{
+          position: 'absolute',
+          bottom: '10px',
+          right: '10px',
+          background: lightsOn ? '#fbbf24' : '#374151',
+          color: 'white',
+          border: 'none',
+          padding: '6px 12px',
+          borderRadius: '4px',
+          cursor: 'pointer',
+          zIndex: 10,
+          fontSize: '12px'
+        }}
+      >
+        {lightsOn ? '💡 Turn off light' : '🌙 Turn on light'}
+      </button>
     </div>
   );
 };
