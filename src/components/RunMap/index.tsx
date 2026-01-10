@@ -105,30 +105,43 @@ const RunMap = ({
       zoom = maxDiff < 0.01 ? 16 : maxDiff < 0.1 ? 13 : maxDiff < 1 ? 10 : 7;
     }
 
-    const map = new (window as any).AMap.Map(mapRef.current, {
-      zoom,
-      center,
-      viewMode: '2D',
+    const map = useAmap(mapRef.current, {
+      zoom: 10,
+      center: [116.4, 39.9],
       mapStyle: lightsOn ? 'amap://styles/normal' : 'amap://styles/dark',
     });
-    mapInstanceRef.current = map;
 
-    // 清除旧轨迹
-    polylineRefs.current.forEach(poly => poly.setMap(null));
-    polylineRefs.current = [];
+    const { convertPath } = useGCJ02();
+    const { updateHeatmap } = useHeatmap(map);
 
-    // 绘制新轨迹
-    tracks.forEach(points => {
-      const polyline = new (window as any).AMap.Polyline({
-        path: points,
-        strokeColor: lightsOn ? '#3b82f6' : '#555',
-        strokeOpacity: 0.6,
-        strokeWeight: 4,
-        zIndex: 10,
+// 更新轨迹
+    useEffect(() => {
+      if (!map) return;
+
+      polylineRefs.current.forEach(p => p.setMap(null));
+      polylineRefs.current = [];
+
+      tracks.forEach(track => {
+        const path = convertPath(track);
+        const poly = new AMap.Polyline({ path });
+        map.add(poly);
+        polylineRefs.current.push(poly);
       });
-      map.add(polyline);
-      polylineRefs.current.push(polyline);
-    });
+    }, [geoData]);
+
+    // 更新热力
+    useEffect(() => {
+      updateHeatmap(generateHeatmapData());
+    }, [activities, thisYear]);
+
+    // 日夜模式（不重建）
+    useEffect(() => {
+      if (map) {
+        map.setMapStyle(
+          lightsOn ? 'amap://styles/normal' : 'amap://styles/dark'
+        );
+      }
+    }, [lightsOn]);
 
     // ✅ 动态加载 Heatmap 插件（高德 V2.0 正确用法）
     (window as any).AMap.plugin(['AMap.Heatmap'], () => {
@@ -149,8 +162,10 @@ const RunMap = ({
             0.8: 'yellow',
             1.0: 'red'
           },
-           heatmapPoints,
-          max: 20
+        });
+        heatmap.setData({
+          data: heatmapPoints,
+          max: 20,
         });
         heatmapRef.current = heatmap;
       }
