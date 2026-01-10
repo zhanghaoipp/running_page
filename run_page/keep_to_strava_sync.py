@@ -10,6 +10,7 @@ from strava_sync import run_strava_sync
 from stravalib.exc import ActivityUploadFailed, RateLimitTimeout
 
 from utils import make_strava_client, upload_file_to_strava
+from gpx_to_tcx import gpx_to_tcx_with_uniform_distance
 
 """
 Only provide the ability to sync data from Keep's multiple sport types to Strava's corresponding sport types to help those who use multiple devices like me, the web page presentation still uses Strava (or refer to nike_to_strava_sync.py to modify it to suit you).
@@ -89,25 +90,38 @@ if __name__ == "__main__":
     print(f"Up to {len(new_tracks)} files are waiting to be uploaded")
     uploaded_file_paths = []
     for track in new_tracks:
-        if track.gpx_file_path is not None:
-            try:
-                upload_file_to_strava(client, track.gpx_file_path, "gpx", False)
-                uploaded_file_paths.append(track)
-            except RateLimitTimeout as e:
-                timeout = e.timeout
-                print(f"Strava API Rate Limit Timeout. Retry in {timeout} seconds\n")
-                time.sleep(timeout)
-                # try previous again
-                upload_file_to_strava(client, track.gpx_file_path, "gpx", False)
-                uploaded_file_paths.append(track)
-            except ActivityUploadFailed as e:
-                print(f"Upload failed error {str(e)}")
-            # spider rule
-            time.sleep(1)
-        else:
-            # for no gps data, like indoorRunning.
+        if track.gpx_file_path is None:
             uploaded_file_paths.append(track)
-    time.sleep(10)
+            continue
+
+        tcx_path = track.gpx_file_path.replace(".gpx", ".tcx")
+
+        try:
+            total_distance = getattr(track, "distance", None)
+            if total_distance is None:
+                print(f"Skip track {track.id}: no distance field")
+                continue
+
+            gpx_to_tcx_with_uniform_distance(
+                track.gpx_file_path,
+                tcx_path,
+                total_distance,
+            )
+
+            upload_file_to_strava(client, tcx_path, "tcx", False)
+            uploaded_file_paths.append(track)
+
+        except RateLimitTimeout as e:
+            timeout = e.timeout
+            print(f"Strava API Rate Limit Timeout. Retry in {timeout} seconds\n")
+            time.sleep(timeout)
+            upload_file_to_strava(client, tcx_path, "tcx", False)
+            uploaded_file_paths.append(track)
+
+        except ActivityUploadFailed as e:
+            print(f"Upload failed error {str(e)}")
+
+        time.sleep(1)
 
     # This file is used to record which logs have been uploaded to strava
     # to avoid intrusion into the data.db resulting in double counting of data.
@@ -136,7 +150,12 @@ if __name__ == "__main__":
     # del the uploaded GPX file.
     for track in uploaded_file_paths:
         if track.gpx_file_path is not None:
-            os.remove(track.gpx_file_path)
+            if os.path.exists(track.gpx_file_path):
+                os.remove(track.gpx_file_path)
+
+            tcx_path = track.gpx_file_path.replace(".gpx", ".tcx")
+            if os.path.exists(tcx_path):
+                os.remove(tcx_path)
         else:
             continue
 
