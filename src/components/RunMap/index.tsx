@@ -4,10 +4,11 @@ import type { FeatureCollection } from 'geojson';
 import { RPGeometry } from '@/static/run_countries';
 import * as polyline from '@mapbox/polyline';
 
-// ✅ 导入新 hooks
+// ✅ 正确导入 hooks
 import { useAmap } from '@/hooks/useAmap';
 import { useHeatmap } from '@/hooks/useHeatmap';
 import { useGCJ02 } from '@/hooks/useGCJ02';
+import { wgs84ToGcj02 } from '@/utils/coord'; // ✅ 导入坐标转换
 
 interface IRunMapProps {
   title: string;
@@ -35,32 +36,40 @@ const RunMap = ({
 
   const AMAP_KEY = 'aafd2d080cfdafafc41ec39d3ba4a458';
 
-  // ✅ 加载高德 API（只一次）
+  // ✅ 加载高德 API（无空格！）
   useEffect(() => {
-    if ((window as any).AMap) return; // 已加载
+    if ((window as any).AMap) return;
 
     const script = document.createElement('script');
-    script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}`;
-    script.onload = () => {
-      // 触发重渲染（可选）
-    };
+    script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}`; // ✅ 修复空格
     document.head.appendChild(script);
 
     return () => {
-      // 清理（可选）
+      // 清理脚本（可选）
+      const existing = document.getElementById('amap-script');
+      if (existing) existing.remove();
     };
   }, []);
 
-  // ✅ 初始化地图（只一次）
+  // ✅ 初始化地图（只两个参数）
   const map = useAmap(mapRef.current, {
     zoom: 10,
     center: [116.4, 39.9],
     mapStyle: lightsOn ? 'amap://styles/normal' : 'amap://styles/dark',
     viewMode: '2D',
-  }, [lightsOn]); // 依赖 lightsOn 以更新样式
+  });
+
+  // 更新地图样式（当日夜模式切换时）
+  useEffect(() => {
+    if (map) {
+      map.setMapStyle(
+        lightsOn ? 'amap://styles/normal' : 'amap://styles/dark'
+      );
+    }
+  }, [map, lightsOn]);
 
   const { convertPath } = useGCJ02();
-  const { updateHeatmap, clearHeatmap } = useHeatmap(map);
+  const { updateHeatmap } = useHeatmap(map);
 
   // 提取并转换轨迹
   const extractAndConvert = () => {
@@ -94,7 +103,7 @@ const RunMap = ({
         } catch (e) {}
       }
       if (lat && lng) {
-        const [gLat, gLng] = wgs84ToGcj02(lat, lng); // 或用 convertPath([[lng, lat]])[0]
+        const [gLat, gLng] = wgs84ToGcj02(lat, lng);
         points.push({ lng: gLng, lat: gLat, count: Math.min(act.distance / 1000, 20) });
       }
     });
@@ -128,11 +137,7 @@ const RunMap = ({
     }
   }, [map, activities, thisYear]);
 
-  // 切换日夜模式
-  const toggleLights = () => {
-    setLightsOn(!lightsOn);
-    // 不 destroy 地图，useAmap 会处理样式更新
-  };
+  const toggleLights = () => setLightsOn(!lightsOn);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '600px' }}>
@@ -174,12 +179,5 @@ const RunMap = ({
     </div>
   );
 };
-
-// 如果 useGCJ02 没导出 wgs84ToGcj02，这里临时定义（或从 coord.ts 导入）
-function wgs84ToGcj02(lat: number, lng: number): [number, number] {
-  // 👉 这里应替换为 import { wgs84ToGcj02 } from '@/utils/coord';
-  // 为简化，此处略去完整实现（你已有）
-  return [lat, lng]; // 临时占位
-}
 
 export default RunMap;
