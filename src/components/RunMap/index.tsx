@@ -119,8 +119,8 @@ const RunMap = ({
     paths.forEach(path => {
       const poly = new (window as any).AMap.Polyline({
         path,
-        strokeColor: lightsOn ? '#3b82f6' : '#555',
-        strokeOpacity: 0.6,
+        strokeColor: lightsOn ? '#3b82f6' : '#FFD700', // ✅ 夜晚黄色轨迹
+        strokeOpacity: 0.7, // 可略提高透明度避免过亮
         strokeWeight: 4,
         zIndex: 10,
       });

@@ -152,7 +152,13 @@ const Index = () => {
   const changeYear = useCallback(
     (y: string) => {
       setYear(y);
-      setCurrentFilter({ item: y, func: filterYearRuns }); // 👈 核心修复
+      setCurrentFilter({ item: y, func: filterYearRuns });
+
+      // 👇 关键修复：退出 single-run 模式
+      setSingleRunId(null);
+      if (window.location.hash) {
+        window.history.pushState(null, '', window.location.pathname); // 清除 #run_xxx
+      }
 
       if ((viewState.zoom ?? 0) > 3 && bounds) {
         setViewState({ ...bounds });
