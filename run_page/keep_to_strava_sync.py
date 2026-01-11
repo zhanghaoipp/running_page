@@ -106,6 +106,7 @@ if __name__ == "__main__":
                 track.gpx_file_path,
                 tcx_path,
                 total_distance,
+                calories=getattr(track, "calories", 0)
             )
 
             upload_file_to_strava(client, tcx_path, "tcx", False)

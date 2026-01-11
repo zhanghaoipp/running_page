@@ -1,7 +1,6 @@
 import xml.etree.ElementTree as ET
 
-def gpx_to_tcx_with_uniform_distance(gpx_path, tcx_path, total_distance_m):
-    # GPX 命名空间（含 TrackPointExtension）
+def gpx_to_tcx_with_uniform_distance(gpx_path, tcx_path, total_distance_m, calories=0):
     ns = {
         "gpx": "http://www.topografix.com/GPX/1/1",
         "gpxtpx": "http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
@@ -14,7 +13,6 @@ def gpx_to_tcx_with_uniform_distance(gpx_path, tcx_path, total_distance_m):
     if len(trkpts) < 2:
         raise ValueError("Not enough trackpoints")
 
-    # 创建 TCX 根节点
     tcx = ET.Element(
         "TrainingCenterDatabase",
         {
@@ -36,6 +34,7 @@ def gpx_to_tcx_with_uniform_distance(gpx_path, tcx_path, total_distance_m):
 
     ET.SubElement(lap, "TotalTimeSeconds").text = "0"
     ET.SubElement(lap, "DistanceMeters").text = f"{total_distance_m:.2f}"
+    ET.SubElement(lap, "Calories").text = str(int(calories))
 
     track = ET.SubElement(lap, "Track")
 
@@ -52,11 +51,10 @@ def gpx_to_tcx_with_uniform_distance(gpx_path, tcx_path, total_distance_m):
         dist = total_distance_m * i / (n - 1)
         ET.SubElement(tp, "DistanceMeters").text = f"{dist:.2f}"
 
-        # ✅ 新增：提取并写入心率
+        # ✅ 心率
         hr_value = None
         extensions = pt.find("gpx:extensions", ns)
         if extensions is not None:
-            # 查找 <gpxtpx:TrackPointExtension>
             tpx = extensions.find("gpxtpx:TrackPointExtension", ns)
             if tpx is not None:
                 hr_elem = tpx.find("gpxtpx:hr", ns)
@@ -70,6 +68,24 @@ def gpx_to_tcx_with_uniform_distance(gpx_path, tcx_path, total_distance_m):
             hr_bpm = ET.SubElement(tp, "HeartRateBpm")
             ET.SubElement(hr_bpm, "Value").text = str(hr_value)
 
-    # 写入文件（格式化 XML）
+        # ✅ 步频（兼容多种来源）
+        cad_value = None
+        if extensions is not None:
+            tpx = extensions.find("gpxtpx:TrackPointExtension", ns)
+            if tpx is not None:
+                # 优先尝试标准 cad
+                cad_elem = tpx.find("gpxtpx:cad", ns)
+                if cad_elem is not None and cad_elem.text:
+                    try:
+                        cad_value = int(float(cad_elem.text))
+                    except ValueError:
+                        pass
+                # 如果没有 cad，尝试其他可能的字段（如 run_cadence）
+                # （Keep 通常只提供 cad）
+        
+        if cad_value is not None:
+            # 👉 统一使用 <Cadence>（Strava 标准）
+            ET.SubElement(tp, "Cadence").text = str(cad_value)
+
     tree = ET.ElementTree(tcx)
     tree.write(tcx_path, encoding="utf-8", xml_declaration=True)
