@@ -33,14 +33,14 @@ const RunMap = ({
 
   const AMAP_KEY = 'aafd2d080cfdafafc41ec39d3ba4a458';
 
-  // 🔑 加载高德 API
+  // 🔑 加载高德 API（修复空格）
   useEffect(() => {
     if ((window as any).AMap) {
       setAmapReady(true);
       return;
     }
     const script = document.createElement('script');
-    script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}`;
+    script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}`; // ✅ 修复空格
     script.onload = () => setAmapReady(true);
     document.head.appendChild(script);
 
@@ -50,7 +50,7 @@ const RunMap = ({
     };
   }, []);
 
-  // 🗺️ 初始化地图（只一次）
+  // 🗺️ 初始化地图
   const map = useMemo(() => {
     if (!amapReady || !mapRef.current) return null;
     return new (window as any).AMap.Map(mapRef.current, {
@@ -112,17 +112,16 @@ const RunMap = ({
     return points;
   };
 
-  // 🛤️ 更新地图内容（关键：先 clearMap）
+  // 🛤️ 更新地图内容（含 clearMap）
   useEffect(() => {
     if (!map) return;
 
-    // 👇 清除所有覆盖物（轨迹 + 热力图）
-    map.clearMap();
+    map.clearMap(); // 👈 清除所有覆盖物
 
-    // 🛤️ 添加新轨迹
+    // 提取并转换轨迹
     const tracks: [number, number][][] = [];
-    geoData.features.forEach(feature => {
-      if (feature.geometry.type === 'LineString') {
+    (geoData?.features ?? []).forEach(feature => {
+      if (feature?.geometry?.type === 'LineString') {
         tracks.push(feature.geometry.coordinates as [number, number][]);
       }
     });
@@ -138,13 +137,13 @@ const RunMap = ({
       map.add(poly);
     });
 
-    // 🔥 添加新年份热力图
+    // 🔥 添加热力图（修复字段名）
     const heatmapPoints = generateHeatmapData();
     if (heatmapPoints.length > 0) {
       (window as any).AMap.plugin(['AMap.Heatmap'], () => {
         new (window as any).AMap.Heatmap({
           map: map,
-           heatmapPoints,
+          data: heatmapPoints, // ✅ 关键修复：字段名必须是 data
           max: 20,
           radius: 25,
           opacity: [0, 0.8],
@@ -158,7 +157,7 @@ const RunMap = ({
         });
       });
     }
-  }, [map, geoData, lightsOn, activities, thisYear]); // 所有依赖都包含
+  }, [map, geoData, lightsOn, activities, thisYear]);
 
   // 💡 切换日夜模式
   const toggleLights = () => setLightsOn(!lightsOn);
@@ -167,7 +166,7 @@ const RunMap = ({
     <div style={{ position: 'relative', width: '100%', height: '600px' }}>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
 
-      {/* ✅ 一排年份按钮 */}
+      {/* 年份按钮 */}
       <div
         style={{
           position: 'absolute',
@@ -198,7 +197,7 @@ const RunMap = ({
         ))}
       </div>
 
-      {/* 💡 日夜切换按钮 */}
+      {/* 日夜切换按钮 */}
       <button
         onClick={toggleLights}
         style={{

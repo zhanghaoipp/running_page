@@ -96,7 +96,11 @@ const Index = () => {
   }, [activities, currentFilter.item, currentFilter.func]);
 
   const geoData = useMemo(() => {
-    return geoJsonForRuns(runs);
+    const result = geoJsonForRuns(runs);
+    // 👇 安全兜底
+    return result && Array.isArray(result.features)
+      ? result
+      : { type: 'FeatureCollection', features: [] };
   }, [runs, themeChangeCounter]);
 
   // for auto zoom
@@ -176,20 +180,16 @@ const Index = () => {
 
   const changeYear = useCallback(
     (y: string) => {
-      // default year
       setYear(y);
+      // 👇 这一行是关键！
+      setCurrentFilter({ item: y, func: filterYearRuns });
 
       if ((viewState.zoom ?? 0) > 3 && bounds) {
-        setViewState({
-          ...bounds,
-        });
+        setViewState({ ...bounds });
       }
-
-      changeByItem(y, 'Year', filterYearRuns);
-      // Stop current animation
       setIsAnimating(false);
     },
-    [viewState.zoom, bounds, changeByItem]
+    [viewState.zoom, bounds]
   );
 
   const changeCity = useCallback(
@@ -413,7 +413,7 @@ const Index = () => {
         <RunMap
           title={title}
           viewState={viewState}
-          geoData={geoData}
+          geoData={animatedGeoData}
           setViewState={setViewState}
           changeYear={changeYear}
           thisYear={year}
