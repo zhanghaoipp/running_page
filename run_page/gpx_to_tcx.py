@@ -1,7 +1,12 @@
 import xml.etree.ElementTree as ET
 
 def gpx_to_tcx_with_uniform_distance(gpx_path, tcx_path, total_distance_m):
-    ns = {"gpx": "http://www.topografix.com/GPX/1/1"}
+    # GPX 命名空间（含 TrackPointExtension）
+    ns = {
+        "gpx": "http://www.topografix.com/GPX/1/1",
+        "gpxtpx": "http://www.garmin.com/xmlschemas/TrackPointExtension/v1"
+    }
+    
     gpx = ET.parse(gpx_path)
     root = gpx.getroot()
 
@@ -9,11 +14,13 @@ def gpx_to_tcx_with_uniform_distance(gpx_path, tcx_path, total_distance_m):
     if len(trkpts) < 2:
         raise ValueError("Not enough trackpoints")
 
+    # 创建 TCX 根节点
     tcx = ET.Element(
         "TrainingCenterDatabase",
         {
             "xmlns": "http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2",
             "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+            "xsi:schemaLocation": "http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2 http://www.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd"
         },
     )
 
@@ -45,4 +52,24 @@ def gpx_to_tcx_with_uniform_distance(gpx_path, tcx_path, total_distance_m):
         dist = total_distance_m * i / (n - 1)
         ET.SubElement(tp, "DistanceMeters").text = f"{dist:.2f}"
 
-    ET.ElementTree(tcx).write(tcx_path, encoding="utf-8", xml_declaration=True)
+        # ✅ 新增：提取并写入心率
+        hr_value = None
+        extensions = pt.find("gpx:extensions", ns)
+        if extensions is not None:
+            # 查找 <gpxtpx:TrackPointExtension>
+            tpx = extensions.find("gpxtpx:TrackPointExtension", ns)
+            if tpx is not None:
+                hr_elem = tpx.find("gpxtpx:hr", ns)
+                if hr_elem is not None and hr_elem.text:
+                    try:
+                        hr_value = int(float(hr_elem.text))
+                    except ValueError:
+                        pass
+        
+        if hr_value is not None:
+            hr_bpm = ET.SubElement(tp, "HeartRateBpm")
+            ET.SubElement(hr_bpm, "Value").text = str(hr_value)
+
+    # 写入文件（格式化 XML）
+    tree = ET.ElementTree(tcx)
+    tree.write(tcx_path, encoding="utf-8", xml_declaration=True)
