@@ -17,7 +17,7 @@ interface IRunMapProps {
   }>;
   availableYears: string[];
   changeYear?: (year: string) => void;
-  animationTrigger?: number; // 👈 用于触发地图聚焦
+  animationTrigger?: number;
 }
 
 const RunMap = ({
@@ -104,7 +104,7 @@ const RunMap = ({
     return points;
   };
 
-  // 🗺️ 核心：更新地图 + 自动聚焦
+  // 🗺️ 核心：更新地图 + 自动聚焦（使用转换后坐标）
   useEffect(() => {
     if (!map || !geoData) return;
 
@@ -117,12 +117,13 @@ const RunMap = ({
       }
     });
 
+    // ✅ 先转换坐标，再用于绘制和计算边界
     const paths = tracks.map(track => convertPath(track));
     paths.forEach(path => {
       const poly = new (window as any).AMap.Polyline({
         path,
-        strokeColor: lightsOn ? '#3b82f6' : '#FFD700', // ✅ 夜晚黄色轨迹
-        strokeOpacity: lightsOn ? 0.5 : 0.55,          // ✅ 带透明度的黄色
+        strokeColor: lightsOn ? '#3b82f6' : '#FFD700', // 白天蓝，夜晚黄
+        strokeOpacity: lightsOn ? 0.5 : 0.55,          // 半透明
         strokeWeight: 4,
         zIndex: 10,
       });
@@ -150,14 +151,19 @@ const RunMap = ({
       });
     }
 
-    // 👇 自动聚焦到当前轨迹范围
-    if (tracks.length > 0) {
+    // 👇 自动聚焦：使用转换后的坐标（GCJ-02）
+    if (paths.length > 0) {
       let allLngs: number[] = [];
       let allLats: number[] = [];
 
-      tracks.flat().forEach(([lng, lat]) => {
-        allLngs.push(lng);
-        allLats.push(lat);
+      paths.forEach(path => {
+        path.forEach(([lng, lat]) => {
+          // 过滤明显无效坐标（可选）
+          if (lng > 70 && lng < 140 && lat > 10 && lat < 55) {
+            allLngs.push(lng);
+            allLats.push(lat);
+          }
+        });
       });
 
       if (allLngs.length > 0) {
@@ -166,10 +172,16 @@ const RunMap = ({
         const minLat = Math.min(...allLats);
         const maxLat = Math.max(...allLats);
 
+        // 处理单点轨迹
+        const delta = (maxLng - minLng < 1e-6 || maxLat - minLat < 1e-6) 
+          ? 0.001 
+          : 0;
+
         const bounds = new (window as any).AMap.Bounds(
-          [minLng, minLat],
-          [maxLng, maxLat]
+          [minLng - delta, minLat - delta],
+          [maxLng + delta, maxLat + delta]
         );
+
         map.setBounds(bounds, {
           padding: [60, 60, 60, 60],
           maxZoom: 16,
@@ -177,7 +189,7 @@ const RunMap = ({
         });
       }
     }
-  }, [map, geoData, lightsOn, activities, thisYear, animationTrigger]); // 👈 依赖 animationTrigger
+  }, [map, geoData, lightsOn, activities, thisYear, animationTrigger]);
 
   const toggleLights = () => setLightsOn(!lightsOn);
 
