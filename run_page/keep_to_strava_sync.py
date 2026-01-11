@@ -38,7 +38,9 @@ def run_keep_sync(email, password, keep_sports_data_api, with_download_gpx=False
                 content = []
     old_tracks_ids = [str(a["run_id"]) for a in content]
     _new_tracks = get_all_keep_tracks(
-        email, password, old_tracks_ids, keep_sports_data_api, True
+        email, password, old_tracks_ids, keep_sports_data_api, 
+        with_gpx=True,
+        with_tcx=False
     )
     new_tracks = []
     for track in _new_tracks:
@@ -102,11 +104,13 @@ if __name__ == "__main__":
                 print(f"Skip track {track.id}: no distance field")
                 continue
 
+            calories = getattr(track, "calories", 0)
+                
             gpx_to_tcx_with_uniform_distance(
                 track.gpx_file_path,
                 tcx_path,
                 total_distance,
-                calories=getattr(track, "calories", 0)
+                calories=calories,
             )
 
             upload_file_to_strava(client, tcx_path, "tcx", False)

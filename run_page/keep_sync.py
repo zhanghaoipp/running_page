@@ -1,3 +1,4 @@
+# keep_sync.py
 import argparse
 import base64
 import json
@@ -40,16 +41,12 @@ KEEP2TCX = {
     "mountaineering": "Hiking",
 }
 
-# need to test
 LOGIN_API = "https://api.gotokeep.com/v1.1/users/login"
 RUN_DATA_API = "https://api.gotokeep.com/pd/v3/stats/detail?dateUnit=all&type={sport_type}&lastDate={last_date}"
 RUN_LOG_API = "https://api.gotokeep.com/pd/v3/{sport_type}log/{run_id}"
 
-HR_FRAME_THRESHOLD_IN_DECISECOND = 100  # Maximum time difference to consider a data point as the nearest, the unit is decisecond(分秒)
-
-TIMESTAMP_THRESHOLD_IN_DECISECOND = 3_600_000  # Threshold for target timestamp adjustment, the unit of timestamp is decisecond(分秒), so the 3_600_000 stands for 100 hours sports time. 100h = 100 * 60 * 60 * 10
-
-# If your points need trans from gcj02 to wgs84 coordinate which use by Mapbox
+HR_FRAME_THRESHOLD_IN_DECISECOND = 100
+TIMESTAMP_THRESHOLD_IN_DECISECOND = 3_600_000
 TRANS_GCJ02_TO_WGS84 = True
 
 
@@ -64,29 +61,36 @@ def login(session, mobile, password):
         token = r.json()["data"]["token"]
         headers["Authorization"] = f"Bearer {token}"
         return session, headers
+    else:
+        raise Exception(f"Login failed: {r.text}")
 
 
 def get_to_download_runs_ids(session, headers, sport_type):
     last_date = 0
     result = []
 
-    while 1:
+    while True:
         r = session.get(
             RUN_DATA_API.format(sport_type=sport_type, last_date=last_date),
             headers=headers,
         )
         if r.ok:
-            run_logs = r.json()["data"]["records"]
-
+            data = r.json()
+            if not data.get("data"):
+                break
+            run_logs = data["data"]["records"]
             for i in run_logs:
                 logs = [j["stats"] for j in i["logs"]]
                 result.extend(k["id"] for k in logs if not k["isDoubtful"])
-            last_date = r.json()["data"]["lastTimestamp"]
+            last_date = data["data"]["lastTimestamp"]
             since_time = datetime.fromtimestamp(last_date // 1000, tz=timezone.utc)
             print(f"pares keep ids data since {since_time}")
-            time.sleep(1)  # spider rule
+            time.sleep(1)
             if not last_date:
                 break
+        else:
+            print(f"API error: {r.status_code} - {r.text}")
+            break
     return result
 
 
@@ -96,6 +100,9 @@ def get_single_run_data(session, headers, run_id, sport_type):
     )
     if r.ok:
         return r.json()
+    else:
+        print(f"Failed to fetch run {run_id}: {r.status_code}")
+        return None
 
 
 def decode_runmap_data(text, is_geo=False):
@@ -110,31 +117,89 @@ def decode_runmap_data(text, is_geo=False):
     return run_points_data
 
 
+def assign_cadence_to_points(run_points_data, cadence_by_distance):
+    """
+    为每个轨迹点分配对应的步频（基于累计距离匹配公里段）
+    cadence_by_distance: [(totalDistance_m, stepFrequency), ...] 按距离升序排列
+    """
+    if not cadence_by_distance or len(run_points_data) <= 1:
+        return run_points_data
+
+    # 确保按距离升序排列
+    cadence_by_distance.sort(key=lambda x: x[0])
+    
+    # 提取所有公里段距离
+    km_distances = [item[0] for item in cadence_by_distance]
+    km_cadences = [item[1] for item in cadence_by_distance]
+    
+    total_points = len(run_points_data)
+    total_distance = km_distances[-1]  # 最后一公里的累计距离
+
+    for i, point in enumerate(run_points_data):
+        # 计算当前点的累计距离（线性插值）
+        if total_points > 1:
+            current_dist = (i / (total_points - 1)) * total_distance
+        else:
+            current_dist = 0.0
+
+        # 找到当前距离所属的公里段（二分查找更高效，这里用简单遍历）
+        assigned_cadence = km_cadences[0]  # 默认第一公里
+        for j in range(len(km_distances)):
+            if km_distances[j] <= current_dist:
+                assigned_cadence = km_cadences[j]
+            else:
+                break
+        
+        point["cad"] = assigned_cadence
+    
+    return run_points_data
+
+
 def parse_raw_data_to_nametuple(
     run_data, old_gpx_ids, old_tcx_ids, with_gpx=False, with_tcx=False
 ):
+    if not isinstance(run_data, dict) or "data" not in run_data:
+        print(f"Invalid response format: {run_data}")
+        return None
+    
     run_data = run_data["data"]
-    run_points_data = []
+    if not run_data:
+        print("Empty run data")
+        return None
 
-    # 5898009e387e28303988f3b7_9223370441312156007_rn middle
     keep_id = run_data["id"].split("_")[1]
-
     start_time = run_data["startTime"]
+
     avg_heart_rate = None
     elevation_gain = None
     decoded_hr_data = []
-    if run_data["heartRate"]:
-        avg_heart_rate = run_data["heartRate"].get("averageHeartRate", None)
-        heart_rate_data = run_data["heartRate"].get("heartRates", None)
+
+    if run_data.get("heartRate"):
+        avg_heart_rate = run_data["heartRate"].get("averageHeartRate")
+        heart_rate_data = run_data["heartRate"].get("heartRates")
         if heart_rate_data:
             decoded_hr_data = decode_runmap_data(heart_rate_data)
-        # fix #66
         if avg_heart_rate and avg_heart_rate < 0:
             avg_heart_rate = None
 
-    if run_data["geoPoints"]:
+    total_calories = run_data.get("calorie", 0)
+
+    if run_data.get("geoPoints"):
         run_points_data = decode_runmap_data(run_data["geoPoints"], True)
         run_points_data_gpx = run_points_data
+        
+        # 👇 构建步频映射表（使用原始 stepFrequency，不除以2）
+        cadence_by_distance = []
+        cross_km_points = run_data.get("crossKmPoints", [])
+        for point in cross_km_points:
+            total_dist = point.get("totalDistance", 0)
+            step_freq = point.get("stepFrequency")
+            if step_freq is not None:
+                # ✅ 关键：直接使用原始值（左右脚合计）
+                cadence_by_distance.append((total_dist, int(step_freq / 2)))
+        
+        run_points_data_gpx = assign_cadence_to_points(run_points_data_gpx, cadence_by_distance)
+
         if TRANS_GCJ02_TO_WGS84:
             run_points_data = [
                 list(eviltransform.gcj2wgs(p["latitude"], p["longitude"]))
@@ -146,10 +211,7 @@ def parse_raw_data_to_nametuple(
 
         for p in run_points_data_gpx:
             if "timestamp" not in p:
-                if "unixTimestamp" in p:
-                    p["timestamp"] = p["unixTimestamp"]
-                else:
-                    p["timestamp"] = 0
+                p["timestamp"] = p.get("unixTimestamp", 0)
             p_hr = find_nearest_hr(decoded_hr_data, int(p["timestamp"]), start_time)
             if p_hr:
                 p["hr"] = p_hr
@@ -169,11 +231,12 @@ def parse_raw_data_to_nametuple(
                 tcx_data = parse_points_to_tcx(
                     run_data, run_points_data_gpx, KEEP2TCX[run_data["dataType"]]
                 )
-                # elevation_gain = tcx_data.get_uphill_downhill().uphill
                 if str(keep_id) not in old_tcx_ids:
                     download_keep_tcx(tcx_data.toprettyxml(), str(keep_id))
     else:
         print(f"ID {keep_id} no gps data")
+        return None
+
     polyline_str = polyline.encode(run_points_data) if run_points_data else ""
     start_latlng = start_point(*run_points_data[0]) if run_points_data else None
     start_date = datetime.fromtimestamp(start_time // 1000, tz=timezone.utc)
@@ -181,13 +244,14 @@ def parse_raw_data_to_nametuple(
     start_date_local = adjust_time(start_date, tz_name)
     end = datetime.fromtimestamp(run_data["endTime"] // 1000, tz=timezone.utc)
     end_local = adjust_time(end, tz_name)
-    if not run_data["duration"]:
-        print(f"ID {keep_id} has no total time just ignore please check")
-        return
+    
+    if not run_data.get("duration"):
+        print(f"ID {keep_id} has no total time")
+        return None
+
     d = {
         "id": int(keep_id),
         "name": f"{KEEP2STRAVA[run_data['dataType']]} from keep",
-        # future to support others workout now only for run
         "type": f"{KEEP2STRAVA[(run_data['dataType'])]}",
         "subtype": f"{KEEP2STRAVA[(run_data['dataType'])]}",
         "start_date": datetime.strftime(start_date, "%Y-%m-%d %H:%M:%S"),
@@ -206,6 +270,7 @@ def parse_raw_data_to_nametuple(
         "average_speed": run_data["distance"] / run_data["duration"],
         "elevation_gain": elevation_gain,
         "location_country": str(run_data.get("region", "")),
+        "calories": int(total_calories),
     }
     return namedtuple("x", d.keys())(*d.values())
 
@@ -245,30 +310,20 @@ def get_all_keep_tracks(
             print(f"parsing keep id {run}")
             try:
                 run_data = get_single_run_data(s, headers, run, api)
+                if run_data is None:
+                    continue
                 track = parse_raw_data_to_nametuple(
                     run_data, old_gpx_ids, old_tcx_ids, with_gpx, with_tcx
                 )
-                tracks.append(track)
+                if track:
+                    tracks.append(track)
             except Exception as e:
-                print(f"Something wrong paring keep id {run}: " + str(e))
+                print(f"Something wrong parsing keep id {run}: {str(e)}")
     return tracks
 
 
 def parse_points_to_gpx(run_points_data, start_time, sport_type):
-    """
-    Convert run points data to GPX format.
-
-    Args:
-        run_id (str): The ID of the run.
-        run_points_data (list of dict): A list of run data points.
-        start_time (int): The start time for adjusting timestamps. Note that the unit of the start_time is millisecond
-
-    Returns:
-        gpx_data (str): GPX data in string format.
-    """
     points_dict_list = []
-    # early timestamp fields in keep's data stands for delta time, but in newly data timestamp field stands for exactly time,
-    # so it doesn't need to plus extra start_time
     if (
         run_points_data
         and run_points_data[0]["timestamp"] > TIMESTAMP_THRESHOLD_IN_DECISECOND
@@ -279,13 +334,13 @@ def parse_points_to_gpx(run_points_data, start_time, sport_type):
         points_dict = {
             "latitude": point["latitude"],
             "longitude": point["longitude"],
-            # note that the timestamp of a point is decisecond(分秒)
             "time": datetime.fromtimestamp(
                 (start_time // 1000 + point["timestamp"] // 10),
                 tz=timezone.utc,
             ),
             "elevation": point.get("altitude"),
             "hr": point.get("hr"),
+            "cad": point.get("cad"),  # 步频（原始值）
         }
         points_dict_list.append(points_dict)
     gpx = gpxpy.gpx.GPX()
@@ -295,7 +350,6 @@ def parse_points_to_gpx(run_points_data, start_time, sport_type):
     gpx_track.type = sport_type
     gpx.tracks.append(gpx_track)
 
-    # Create first segment in our GPX track:
     gpx_segment = gpxpy.gpx.GPXTrackSegment()
     gpx_track.segments.append(gpx_segment)
     for p in points_dict_list:
@@ -305,82 +359,60 @@ def parse_points_to_gpx(run_points_data, start_time, sport_type):
             time=p["time"],
             elevation=p.get("elevation"),
         )
-        if p.get("hr") is not None:
-            gpx_extension_hr = ET.fromstring(
+        if p.get("hr") is not None or p.get("cad") is not None:
+            ext_content = ""
+            if p.get("hr") is not None:
+                ext_content += f"<gpxtpx:hr>{p['hr']}</gpxtpx:hr>"
+            if p.get("cad") is not None:
+                ext_content += f"<gpxtpx:cad>{p['cad']}</gpxtpx:cad>"
+            
+            gpx_extension = ET.fromstring(
                 f"""<gpxtpx:TrackPointExtension xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">
-                    <gpxtpx:hr>{p["hr"]}</gpxtpx:hr>
-                    </gpxtpx:TrackPointExtension>
-                    """
+                        {ext_content}
+                    </gpxtpx:TrackPointExtension>"""
             )
-            point.extensions.append(gpx_extension_hr)
+            point.extensions.append(gpx_extension)
         gpx_segment.points.append(point)
     return gpx
 
 
 def parse_points_to_tcx(run_data, run_points_data, sport_type):
-    """
-    Convert run points data to TCX format.
-
-    Args:
-        run_points_data (list of dict): A list of run data points.
-
-    Returns:
-        tcx_data (str): TCX data in string format.
-    """
-
-    # note that the timestamp of a point is decisecond(分秒)
     fit_start_time = datetime.fromtimestamp(
         run_data.get("startTime") // 1000, tz=timezone.utc
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Root node
     training_center_database = ET.Element(
         "TrainingCenterDatabase",
         {
             "xmlns": "http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2",
-            "xmlns:ns5": "http://www.garmin.com/xmlschemas/ActivityGoals/v1",
-            "xmlns:ns3": "http://www.garmin.com/xmlschemas/ActivityExtension/v2",
-            "xmlns:ns2": "http://www.garmin.com/xmlschemas/UserProfile/v2",
             "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
-            "xmlns:ns4": "http://www.garmin.com/xmlschemas/ProfileExtension/v1",
             "xsi:schemaLocation": "http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2 http://www.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd",
         },
     )
-    # xml tree
-    ET.ElementTree(training_center_database)
-    # Activities
     activities = ET.Element("Activities")
     training_center_database.append(activities)
-    # activity
     activity = ET.Element("Activity", {"Sport": sport_type})
     activities.append(activity)
-    # Id
     activity_id = ET.Element("Id")
-    activity_id.text = fit_start_time  # Keep use start_time as ID
+    activity_id.text = fit_start_time
     activity.append(activity_id)
-    # Lap
     activity_lap = ET.Element("Lap", {"StartTime": fit_start_time})
     activity.append(activity_lap)
-    # TotalTimeSeconds
     activity_total_time = ET.Element("TotalTimeSeconds")
-    activity_total_time.text = str(run_data.get("duration"))
+    activity_total_time.text = str(run_data.get("duration", 0))
     activity_lap.append(activity_total_time)
-    # DistanceMeters
     activity_distance = ET.Element("DistanceMeters")
-    activity_distance.text = str(run_data.get("distance"))
+    activity_distance.text = str(run_data.get("distance", 0))
     activity_lap.append(activity_distance)
-    #       Calories
     activity_calories = ET.Element("Calories")
-    activity_calories.text = str(run_data.get("calorie"))
+    activity_calories.text = str(run_data.get("calorie", 0))
     activity_lap.append(activity_calories)
-    # Track
+
     track = ET.Element("Track")
     activity_lap.append(track)
     for point in run_points_data:
         tp = ET.Element("Trackpoint")
         track.append(tp)
-        # Time
-        # note that the timestamp of a point is decisecond(分秒)
         time_stamp = datetime.fromtimestamp(
             (run_data.get("startTime") // 1000 + point.get("timestamp") // 10),
             tz=timezone.utc,
@@ -388,34 +420,26 @@ def parse_points_to_tcx(run_data, run_points_data, sport_type):
         time_label = ET.Element("Time")
         time_label.text = time_stamp
         tp.append(time_label)
-        # Position
         try:
             position = ET.Element("Position")
             tp.append(position)
-            #   LatitudeDegrees
             lati = ET.Element("LatitudeDegrees")
             lati.text = str(point["latitude"])
             position.append(lati)
-            #   LongitudeDegrees
             longi = ET.Element("LongitudeDegrees")
             longi.text = str(point["longitude"])
             position.append(longi)
-            #  AltitudeMeters
             altitude_meters = ET.Element("AltitudeMeters")
-            altitude_meters.text = str(point.get("altitude"))
+            altitude_meters.text = str(point.get("altitude", 0))
             tp.append(altitude_meters)
         except KeyError:
             pass
-        # HeartRateBpm
-        try:
+        if point.get("hr") is not None:
             bpm = ET.Element("HeartRateBpm")
             bpm_value = ET.Element("Value")
-            bpm.append(bpm_value)
             bpm_value.text = str(point["hr"])
+            bpm.append(bpm_value)
             tp.append(bpm)
-        except KeyError:
-            pass
-    # write to TCX file
     xml_str = minidom.parseString(ET.tostring(training_center_database))
     return xml_str
 
@@ -423,37 +447,16 @@ def parse_points_to_tcx(run_data, run_points_data, sport_type):
 def find_nearest_hr(
     hr_data_list, target_time, start_time, threshold=HR_FRAME_THRESHOLD_IN_DECISECOND
 ):
-    """
-    Find the nearest heart rate data point to the target time.
-    if cannot found suitable HR data within the specified time frame (within 10 seconds by default), there will be no hr data return
-    Args:
-        heart_rate_data (list of dict): A list of heart rate data points, where each point is a dictionary
-            containing at least "timestamp" and "beatsPerMinute" keys.
-        target_time (float): The target timestamp for which to find the nearest heart rate data point. Please Note that the unit of target_time is decisecond(分秒),
-            means 1/10 of a second ,this is very unusual!! so when we convert a target_time to second we need to divide by 10, and when we convert a target time to millisecond
-            we need to times 100.
-        start_time (float): The reference start time. the unit of start_time is normal millisecond timestamp
-        threshold (float, optional): The maximum allowed time difference to consider a data point as the nearest.
-            Default is HR_THRESHOLD, the unit is decisecond(分秒)
-
-    Returns:
-        int or None: The heart rate value of the nearest data point, or None if no suitable data point is found.
-    """
     closest_element = None
-    # init difference value
     min_difference = float("inf")
     if target_time > TIMESTAMP_THRESHOLD_IN_DECISECOND:
-        # note that the unit of target_time is decisecond and the unit of start_time is normal millisecond
-        target_time = target_time = target_time - start_time // 100
+        target_time = target_time - start_time // 100
 
     for item in hr_data_list:
         timestamp = item.get("timestamp")
-
         if not timestamp:
             continue
-
         difference = abs(timestamp - target_time)
-
         if difference <= threshold and difference < min_difference:
             closest_element = item
             min_difference = difference
@@ -462,7 +465,6 @@ def find_nearest_hr(
         hr = closest_element.get("beatsPerMinute")
         if hr and hr > 0:
             return hr
-
     return None
 
 
@@ -476,7 +478,6 @@ def download_keep_gpx(gpx_data, keep_id):
     except Exception as e:
         print(f"Something wrong to download keep gpx {str(e)}")
         print(f"wrong id {keep_id}")
-        pass
 
 
 def download_keep_tcx(tcx_data, keep_id):
@@ -489,56 +490,40 @@ def download_keep_tcx(tcx_data, keep_id):
     except Exception as e:
         print(f"Something wrong to download keep tcx {str(e)}")
         print(f"wrong id {keep_id}")
-        pass
 
 
 def run_keep_sync(
-    email, password, keep_sports_data_api, with_gpx=False, with_tcx=False
+    email, password, keep_sports_data_api, with_download_gpx=False
 ):
-    generator = Generator(SQL_FILE)
-    old_tracks_ids = generator.get_old_tracks_ids()
-    new_tracks = get_all_keep_tracks(
-        email, password, old_tracks_ids, keep_sports_data_api, with_gpx, with_tcx
+    if not os.path.exists(KEEP2STRAVA_BK_PATH):
+        file = open(KEEP2STRAVA_BK_PATH, "w")
+        file.close()
+        content = []
+    else:
+        with open(KEEP2STRAVA_BK_PATH) as f:
+            try:
+                content = json.loads(f.read())
+            except json.JSONDecodeError as e:
+                print(f"Error reading JSON file {KEEP2STRAVA_BK_PATH}: {e}")
+                content = []
+    old_tracks_ids = [str(a["run_id"]) for a in content]
+    
+    # 👇 启用 GPX 生成
+    _new_tracks = get_all_keep_tracks(
+        email, password, old_tracks_ids, keep_sports_data_api,
+        with_gpx=True,   # 必须为 True
+        with_tcx=False
     )
-    generator.sync_from_app(new_tracks)
+    
+    new_tracks = []
+    for track in _new_tracks:
+        if track.start_latlng is not None:
+            file_path = namedtuple("x", "gpx_file_path")(
+                os.path.join(GPX_FOLDER, str(track.id) + ".gpx")
+            )
+        else:
+            file_path = namedtuple("x", "gpx_file_path")(None)
+        track = namedtuple("y", track._fields + file_path._fields)(*(track + file_path))
+        new_tracks.append(track)
 
-    activities_list = generator.load()
-    with open(JSON_FILE, "w") as f:
-        json.dump(activities_list, f)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("phone_number", help="keep login phone number")
-    parser.add_argument("password", help="keep login password")
-    parser.add_argument(
-        "--sync-types",
-        dest="sync_types",
-        nargs="+",
-        default=KEEP_SPORT_TYPES,
-        help="sync sport types from keep, default is running, you can choose from running, hiking, cycling",
-    )
-    parser.add_argument(
-        "--with-gpx",
-        dest="with_gpx",
-        action="store_true",
-        help="get all keep data to gpx and download",
-    )
-    parser.add_argument(
-        "--with-tcx",
-        dest="with_tcx",
-        action="store_true",
-        help="get all keep data to tcx and download",
-    )
-    options = parser.parse_args()
-    for _tpye in options.sync_types:
-        assert (
-            _tpye in KEEP_SPORT_TYPES
-        ), f"{_tpye} are not supported type, please make sure that the type entered in the {KEEP_SPORT_TYPES}"
-    run_keep_sync(
-        options.phone_number,
-        options.password,
-        options.sync_types,
-        options.with_gpx,
-        options.with_tcx,
-    )
+    return new_tracks
