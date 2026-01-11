@@ -17,6 +17,7 @@ interface IRunMapProps {
   }>;
   availableYears: string[];
   changeYear?: (year: string) => void;
+  animationTrigger?: number; // 👈 用于触发地图聚焦
 }
 
 const RunMap = ({
@@ -26,6 +27,7 @@ const RunMap = ({
   activities,
   availableYears,
   changeYear,
+  animationTrigger,
 }: IRunMapProps) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const [lightsOn, setLightsOn] = useState(false);
@@ -33,14 +35,14 @@ const RunMap = ({
 
   const AMAP_KEY = 'aafd2d080cfdafafc41ec39d3ba4a458';
 
-  // 🔑 加载高德 API（修复空格）
+  // 🔑 加载高德 API
   useEffect(() => {
     if ((window as any).AMap) {
       setAmapReady(true);
       return;
     }
     const script = document.createElement('script');
-    script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}`; // ✅ 无空格
+    script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}`;
     script.onload = () => setAmapReady(true);
     document.head.appendChild(script);
 
@@ -102,9 +104,9 @@ const RunMap = ({
     return points;
   };
 
-  // ✅ 核心：安全检查 + clearMap
+  // 🗺️ 核心：更新地图 + 自动聚焦
   useEffect(() => {
-    if (!map || !geoData) return; // 👈 防止 undefined
+    if (!map || !geoData) return;
 
     map.clearMap();
 
@@ -120,19 +122,20 @@ const RunMap = ({
       const poly = new (window as any).AMap.Polyline({
         path,
         strokeColor: lightsOn ? '#3b82f6' : '#FFD700', // ✅ 夜晚黄色轨迹
-        strokeOpacity: 0.7, // 可略提高透明度避免过亮
+        strokeOpacity: lightsOn ? 0.5 : 0.55,          // ✅ 带透明度的黄色
         strokeWeight: 4,
         zIndex: 10,
       });
       map.add(poly);
     });
 
+    // 🔥 热力图
     const heatmapPoints = generateHeatmapData();
     if (heatmapPoints.length > 0) {
       (window as any).AMap.plugin(['AMap.Heatmap'], () => {
         new (window as any).AMap.Heatmap({
           map: map,
-          data: heatmapPoints, // ✅ 字段名必须是 data
+           heatmapPoints,
           max: 20,
           radius: 25,
           opacity: [0, 0.8],
@@ -146,7 +149,35 @@ const RunMap = ({
         });
       });
     }
-  }, [map, geoData, lightsOn, activities, thisYear]);
+
+    // 👇 自动聚焦到当前轨迹范围
+    if (tracks.length > 0) {
+      let allLngs: number[] = [];
+      let allLats: number[] = [];
+
+      tracks.flat().forEach(([lng, lat]) => {
+        allLngs.push(lng);
+        allLats.push(lat);
+      });
+
+      if (allLngs.length > 0) {
+        const minLng = Math.min(...allLngs);
+        const maxLng = Math.max(...allLngs);
+        const minLat = Math.min(...allLats);
+        const maxLat = Math.max(...allLats);
+
+        const bounds = new (window as any).AMap.Bounds(
+          [minLng, minLat],
+          [maxLng, maxLat]
+        );
+        map.setBounds(bounds, {
+          padding: [60, 60, 60, 60],
+          maxZoom: 16,
+          animate: true,
+        });
+      }
+    }
+  }, [map, geoData, lightsOn, activities, thisYear, animationTrigger]); // 👈 依赖 animationTrigger
 
   const toggleLights = () => setLightsOn(!lightsOn);
 
@@ -154,7 +185,17 @@ const RunMap = ({
     <div style={{ position: 'relative', width: '100%', height: '600px' }}>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
 
-      <div style={{ position: 'absolute', top: '10px', left: '10px', display: 'flex', gap: '8px', zIndex: 10 }}>
+      {/* 年份按钮 */}
+      <div
+        style={{
+          position: 'absolute',
+          top: '10px',
+          left: '10px',
+          display: 'flex',
+          gap: '8px',
+          zIndex: 10,
+        }}
+      >
         {availableYears.map(year => (
           <button
             key={year}
@@ -175,6 +216,7 @@ const RunMap = ({
         ))}
       </div>
 
+      {/* 日夜切换按钮 */}
       <button
         onClick={toggleLights}
         style={{
