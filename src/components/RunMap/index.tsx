@@ -40,7 +40,7 @@ const RunMap = ({
       return;
     }
     const script = document.createElement('script');
-    script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}`; // ✅ 修复空格
+    script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}`; // ✅ 无空格
     script.onload = () => setAmapReady(true);
     document.head.appendChild(script);
 
@@ -50,7 +50,6 @@ const RunMap = ({
     };
   }, []);
 
-  // 🗺️ 初始化地图
   const map = useMemo(() => {
     if (!amapReady || !mapRef.current) return null;
     return new (window as any).AMap.Map(mapRef.current, {
@@ -61,16 +60,12 @@ const RunMap = ({
     });
   }, [amapReady, mapRef.current]);
 
-  // 🌙 更新底图样式
   useEffect(() => {
     if (map) {
-      map.setMapStyle(
-        lightsOn ? 'amap://styles/normal' : 'amap://styles/dark'
-      );
+      map.setMapStyle(lightsOn ? 'amap://styles/normal' : 'amap://styles/dark');
     }
   }, [map, lightsOn]);
 
-  // 🧭 坐标转换
   const convertPath = (path: [number, number][]) => {
     return path.map(([lng, lat]) => {
       const [gLat, gLng] = wgs84ToGcj02(lat, lng);
@@ -78,7 +73,6 @@ const RunMap = ({
     });
   };
 
-  // 🔥 生成热力点
   const generateHeatmapData = () => {
     const points: { lng: number; lat: number; count: number }[] = [];
     const yearNum = Number(thisYear);
@@ -102,29 +96,25 @@ const RunMap = ({
       }
       if (lat && lng) {
         const [gLat, gLng] = wgs84ToGcj02(lat, lng);
-        points.push({
-          lng: gLng,
-          lat: gLat,
-          count: Math.min(act.distance / 1000, 20),
-        });
+        points.push({ lng: gLng, lat: gLat, count: Math.min(act.distance / 1000, 20) });
       }
     });
     return points;
   };
 
-  // 🛤️ 更新地图内容（含 clearMap）
+  // ✅ 核心：安全检查 + clearMap
   useEffect(() => {
-    if (!map) return;
+    if (!map || !geoData) return; // 👈 防止 undefined
 
-    map.clearMap(); // 👈 清除所有覆盖物
+    map.clearMap();
 
-    // 提取并转换轨迹
     const tracks: [number, number][][] = [];
-    (geoData?.features ?? []).forEach(feature => {
+    (geoData.features ?? []).forEach(feature => {
       if (feature?.geometry?.type === 'LineString') {
         tracks.push(feature.geometry.coordinates as [number, number][]);
       }
     });
+
     const paths = tracks.map(track => convertPath(track));
     paths.forEach(path => {
       const poly = new (window as any).AMap.Polyline({
@@ -137,13 +127,12 @@ const RunMap = ({
       map.add(poly);
     });
 
-    // 🔥 添加热力图（修复字段名）
     const heatmapPoints = generateHeatmapData();
     if (heatmapPoints.length > 0) {
       (window as any).AMap.plugin(['AMap.Heatmap'], () => {
         new (window as any).AMap.Heatmap({
           map: map,
-          data: heatmapPoints, // ✅ 关键修复：字段名必须是 data
+          data: heatmapPoints, // ✅ 字段名必须是 data
           max: 20,
           radius: 25,
           opacity: [0, 0.8],
@@ -159,24 +148,13 @@ const RunMap = ({
     }
   }, [map, geoData, lightsOn, activities, thisYear]);
 
-  // 💡 切换日夜模式
   const toggleLights = () => setLightsOn(!lightsOn);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '600px' }}>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
 
-      {/* 年份按钮 */}
-      <div
-        style={{
-          position: 'absolute',
-          top: '10px',
-          left: '10px',
-          display: 'flex',
-          gap: '8px',
-          zIndex: 10,
-        }}
-      >
+      <div style={{ position: 'absolute', top: '10px', left: '10px', display: 'flex', gap: '8px', zIndex: 10 }}>
         {availableYears.map(year => (
           <button
             key={year}
@@ -197,7 +175,6 @@ const RunMap = ({
         ))}
       </div>
 
-      {/* 日夜切换按钮 */}
       <button
         onClick={toggleLights}
         style={{
