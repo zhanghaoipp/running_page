@@ -15,6 +15,7 @@ interface IRunMapProps {
     start_date: string;
     summary_polyline?: string;
   }>;
+  availableYears: string[];
   changeYear?: (year: string) => void;
 }
 
@@ -23,11 +24,10 @@ const RunMap = ({
   geoData,
   thisYear,
   activities,
+  availableYears,
   changeYear,
 }: IRunMapProps) => {
   const mapRef = useRef<HTMLDivElement>(null);
-  const polylineRefs = useRef<any[]>([]);
-  const heatmapRef = useRef<any>(null);
   const [lightsOn, setLightsOn] = useState(false);
   const [amapReady, setAmapReady] = useState(false);
 
@@ -45,24 +45,23 @@ const RunMap = ({
     document.head.appendChild(script);
 
     return () => {
-      // 清理脚本（避免重复加载）
       const existing = document.querySelector(`script[src*="webapi.amap.com"]`);
       if (existing) existing.remove();
     };
   }, []);
 
-  // 🗺️ 初始化地图（确保 API + DOM 都 ready）
+  // 🗺️ 地图只初始化一次（不随 lightsOn 重建）
   const map = useMemo(() => {
     if (!amapReady || !mapRef.current) return null;
     return new (window as any).AMap.Map(mapRef.current, {
       zoom: 10,
       center: [116.4, 39.9],
       viewMode: '2D',
-      mapStyle: lightsOn ? 'amap://styles/normal' : 'amap://styles/dark',
+      mapStyle: 'amap://styles/dark', // 默认暗色
     });
-  }, [amapReady, mapRef.current, lightsOn]);
+  }, [amapReady, mapRef.current]);
 
-  // 🌙 更新地图样式（当日夜切换）
+  // 🌙 更新地图底图样式
   useEffect(() => {
     if (map) {
       map.setMapStyle(
@@ -124,13 +123,9 @@ const RunMap = ({
     return points;
   };
 
-  // 🛤️ 更新轨迹线
+  // 🛤️ 更新轨迹线（不清除旧轨迹，由高德管理）
   useEffect(() => {
     if (!map) return;
-
-    // 清除旧轨迹
-    polylineRefs.current.forEach(p => p.setMap(null));
-    polylineRefs.current = [];
 
     const paths = extractAndConvert();
     paths.forEach(path => {
@@ -142,27 +137,21 @@ const RunMap = ({
         zIndex: 10,
       });
       map.add(poly);
-      polylineRefs.current.push(poly);
     });
   }, [map, geoData, lightsOn]);
 
-  // 🔥 更新热力图（兼容 V2.0）
+  // 🔥 更新热力图（每次重建，不清除旧的）
   useEffect(() => {
     if (!map) return;
 
     const heatmapPoints = generateHeatmapData();
     if (heatmapPoints.length === 0) return;
 
-    // 清除旧热力图
-    if (heatmapRef.current) {
-      heatmapRef.current.setMap(null);
-      heatmapRef.current = null;
-    }
-
-    // 动态加载 Heatmap 插件
     (window as any).AMap.plugin(['AMap.Heatmap'], () => {
-      heatmapRef.current = new (window as any).AMap.Heatmap({
+      new (window as any).AMap.Heatmap({
         map: map,
+         heatmapPoints,
+        max: 20,
         radius: 25,
         opacity: [0, 0.8],
         gradient: {
@@ -172,8 +161,6 @@ const RunMap = ({
           0.8: 'yellow',
           1.0: 'red',
         },
-         heatmapPoints,
-        max: 20,
       });
     });
   }, [map, activities, thisYear]);
@@ -181,38 +168,42 @@ const RunMap = ({
   // 💡 切换日夜模式
   const toggleLights = () => setLightsOn(!lightsOn);
 
-  // 📅 切换年份（示例逻辑）
-  const handleYearClick = () => {
-    if (changeYear) {
-      const nextYear = thisYear === '2026' ? '2025' : '2026';
-      changeYear(nextYear);
-    }
-  };
-
   return (
     <div style={{ position: 'relative', width: '100%', height: '600px' }}>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
 
-      {/* 年份标签 */}
+      {/* ✅ 一排年份按钮（从近到远） */}
       <div
-        onClick={changeYear ? handleYearClick : undefined}
         style={{
           position: 'absolute',
           top: '10px',
-          right: '10px',
-          background: 'rgba(255,255,255,0.8)',
-          padding: '4px 8px',
-          borderRadius: '4px',
-          fontSize: '14px',
-          fontWeight: 'bold',
+          left: '10px',
+          display: 'flex',
+          gap: '8px',
           zIndex: 10,
-          cursor: changeYear ? 'pointer' : 'default',
         }}
       >
-        {thisYear}
+        {availableYears.map(year => (
+          <button
+            key={year}
+            onClick={() => changeYear && changeYear(year)}
+            style={{
+              background: thisYear === year ? '#3b82f6' : 'rgba(255,255,255,0.8)',
+              color: thisYear === year ? 'white' : 'black',
+              border: 'none',
+              padding: '4px 8px',
+              borderRadius: '4px',
+              fontSize: '12px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+            }}
+          >
+            {year}
+          </button>
+        ))}
       </div>
 
-      {/* 日夜切换按钮 */}
+      {/* 💡 日夜切换按钮 */}
       <button
         onClick={toggleLights}
         style={{
