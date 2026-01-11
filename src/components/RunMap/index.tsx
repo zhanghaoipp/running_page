@@ -68,16 +68,25 @@ const RunMap = ({
     }
   }, [map, lightsOn]);
 
-  const convertPath = (path: [number, number][]) => {
-    return path.map(([lng, lat]) => {
-      const [gLat, gLng] = wgs84ToGcj02(lat, lng);
-      return [gLng, gLat];
-    });
+  // ✅ 核心：按年份决定是否转换坐标
+  const convertPathByYear = (path: [number, number][], year: number) => {
+    if (year >= 2026) {
+      // 2026+ 是 Keep 数据（WGS84）→ 转 GCJ-02
+      return path.map(([lng, lat]) => {
+        const [gLat, gLng] = wgs84ToGcj02(lat, lng);
+        return [gLng, gLat];
+      });
+    } else {
+      // 2025 及以前是华为数据（已是 GCJ-02）→ 不转换
+      return path;
+    }
   };
 
+  // 🔥 生成热力点（同样按年份处理）
   const generateHeatmapData = () => {
     const points: { lng: number; lat: number; count: number }[] = [];
     const yearNum = Number(thisYear);
+
     activities.forEach(act => {
       if (!act.start_date || act.distance <= 0) return;
       const actYear = new Date(act.start_date).getFullYear();
@@ -97,14 +106,22 @@ const RunMap = ({
         }
       }
       if (lat && lng) {
-        const [gLat, gLng] = wgs84ToGcj02(lat, lng);
-        points.push({ lng: gLng, lat: gLat, count: Math.min(act.distance / 1000, 20) });
+        let finalLat = lat, finalLng = lng;
+        // ✅ 按年份决定是否转换热力点
+        if (yearNum >= 2026) {
+          [finalLat, finalLng] = wgs84ToGcj02(lat, lng);
+        }
+        points.push({
+          lng: finalLng,
+          lat: finalLat,
+          count: Math.min(act.distance / 1000, 20),
+        });
       }
     });
     return points;
   };
 
-  // 🗺️ 核心：更新地图 + 自动聚焦（使用转换后坐标）
+  // 🗺️ 更新地图 + 自动聚焦
   useEffect(() => {
     if (!map || !geoData) return;
 
@@ -117,8 +134,10 @@ const RunMap = ({
       }
     });
 
-    // ✅ 先转换坐标，再用于绘制和计算边界
-    const paths = tracks.map(track => convertPath(track));
+    // ✅ 按年份转换轨迹坐标
+    const currentYearNum = parseInt(thisYear);
+    const paths = tracks.map(track => convertPathByYear(track, currentYearNum));
+
     paths.forEach(path => {
       const poly = new (window as any).AMap.Polyline({
         path,
@@ -151,14 +170,13 @@ const RunMap = ({
       });
     }
 
-    // 👇 自动聚焦：使用转换后的坐标（GCJ-02）
+    // 👇 自动聚焦
     if (paths.length > 0) {
       let allLngs: number[] = [];
       let allLats: number[] = [];
 
       paths.forEach(path => {
         path.forEach(([lng, lat]) => {
-          // 过滤明显无效坐标（可选）
           if (lng > 70 && lng < 140 && lat > 10 && lat < 55) {
             allLngs.push(lng);
             allLats.push(lat);
@@ -172,11 +190,7 @@ const RunMap = ({
         const minLat = Math.min(...allLats);
         const maxLat = Math.max(...allLats);
 
-        // 处理单点轨迹
-        const delta = (maxLng - minLng < 1e-6 || maxLat - minLat < 1e-6) 
-          ? 0.001 
-          : 0;
-
+        const delta = (maxLng - minLng < 1e-6 || maxLat - minLat < 1e-6) ? 0.001 : 0;
         const bounds = new (window as any).AMap.Bounds(
           [minLng - delta, minLat - delta],
           [maxLng + delta, maxLat + delta]
