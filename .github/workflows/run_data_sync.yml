@@ -70,10 +70,6 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-      - name: Clean old sync records
-        run: |
-          rm -f activities/keep2strava.json
-          # 仅在首次修复时使用，之后移除
       - name: Cache Data Files
         if: env.SAVE_DATA_IN_GITHUB_CACHE == 'true'
         uses: actions/cache@v4
@@ -87,7 +83,6 @@ jobs:
             Workouts
             run_page/data.db
             src/static/activities.json
-            activities/keep2strava.json
             imported.json
           key: ${{ env.DATA_CACHE_PREFIX }}-${{ github.sha }}-${{ github.run_id }}
           restore-keys: |
