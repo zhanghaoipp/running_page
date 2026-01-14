@@ -25,13 +25,13 @@ def run_strava_sync(
     activities_list = generator.load()
     
     # 调试：打印所有活动（无论类型）的 ID 和本地日期
-    print("=== 调试：同步后的所有活动 ===")
-    for act in activities_list:
-        act_id = act.get('run_id')          # 实际是 activity ID
-        start_date_local = act.get('start_date_local')
-        act_type = act.get('type', 'Unknown')
-        print(f"ID: {act_id} | 类型: {act_type} | 日期: {start_date_local}")
-    print("==================================\n")
+    # print("=== 调试：同步后的所有活动 ===")
+    # for act in activities_list:
+    #     act_id = act.get('run_id')          # 实际是 activity ID
+    #     start_date_local = act.get('start_date_local')
+    #     act_type = act.get('type', 'Unknown')
+    #     print(f"ID: {act_id} | 类型: {act_type} | 日期: {start_date_local}")
+    # print("==================================\n")
 
     with open(JSON_FILE, "w") as f:
         json.dump(activities_list, f)
