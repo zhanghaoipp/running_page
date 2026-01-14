@@ -250,6 +250,20 @@ jobs:
           git commit -m 'update new runs' || echo 'nothing to commit'
           git push || echo 'nothing to push'
 
+      - name: Prepare Pages dist
+        if: env.BUILD_GH_PAGES == 'true'
+        run: |
+          rm -rf pages_dist
+          mkdir -p pages_dist/assets pages_dist/static
+          # 1. 拷贝前端构建需要的数据
+          if [ -f src/static/activities.json ]; then
+            cp src/static/activities.json pages_dist/static/
+          fi
+          # 2. 只拷贝 SVG（不拷贝 GPX / TCX / FIT）
+          if ls assets/*.svg 1> /dev/null 2>&1; then
+            cp assets/*.svg pages_dist/assets/
+          fi
+
       - name: Set Output
         id: set_output
         env:
