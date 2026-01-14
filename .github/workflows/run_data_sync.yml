@@ -250,24 +250,6 @@ jobs:
           git commit -m 'update new runs' || echo 'nothing to commit'
           git push || echo 'nothing to push'
 
-      - name: Prepare Pages dist
-        if: env.BUILD_GH_PAGES == 'true'
-        run: |
-          rm -rf pages_dist
-          mkdir -p pages_dist
-          # 拷贝 pnpm build 生成的前端
-          cp -r dist/* pages_dist/
-          # 拷贝额外数据
-          if [ -f src/static/activities.json ]; then
-            mkdir -p pages_dist/static
-            cp src/static/activities.json pages_dist/static/
-          fi
-          # 拷贝 SVG
-          if ls assets/*.svg 1> /dev/null 2>&1; then
-            mkdir -p pages_dist/assets
-            cp assets/*.svg pages_dist/assets/
-          fi
-
       - name: Set Output
         id: set_output
         env:
