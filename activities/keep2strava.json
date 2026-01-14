@@ -34,5 +34,35 @@
 "name": "Run from keep",
 "type": "Run",
 "gpx_file_path": "/home/ptz/running_page/GPX_OUT/9223370269596914807.gpx"
+},
+{
+"run_id": 9223370268542832807,
+"name": "Run from keep",
+"type": "Run",
+"gpx_file_path": "/home/ptz/running_page/GPX_OUT/9223370268542832807.gpx"
+},
+{
+"run_id": 9223370268559075807,
+"name": "Walk from keep",
+"type": "Walk",
+"gpx_file_path": null
+},
+{
+"run_id": 9223370268592735807,
+"name": "Walk from keep",
+"type": "Walk",
+"gpx_file_path": null
+},
+{
+"run_id": 9223370268645535807,
+"name": "Walk from keep",
+"type": "Walk",
+"gpx_file_path": null
+},
+{
+"run_id": 9223370268679315807,
+"name": "Walk from keep",
+"type": "Walk",
+"gpx_file_path": null
 }
 ]
