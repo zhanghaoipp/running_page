@@ -52,29 +52,30 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Cache Data Files
-        if: inputs.save_data_in_github_cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            activities
-            assets
-            GPX_OUT
-            TCX_OUT
-            FIT_OUT
-            Workouts
-            run_page/data.db
-            src/static/activities.json
-            imported.json
-          key: ${{ inputs.data_cache_prefix }}-${{ github.sha }}-${{ github.run_id }}
-          restore-keys: |
-            ${{ inputs.data_cache_prefix }}-${{ github.sha }}-
-            ${{ inputs.data_cache_prefix }}-
+      # - name: Cache Data Files
+      #   if: inputs.save_data_in_github_cache
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: |
+      #       activities
+      #       assets
+      #       GPX_OUT
+      #       TCX_OUT
+      #       FIT_OUT
+      #       Workouts
+      #       run_page/data.db
+      #       src/static/activities.json
+      #       imported.json
+      #     key: ${{ inputs.data_cache_prefix }}-${{ github.sha }}-${{ github.run_id }}
+      #     restore-keys: |
+      #       ${{ inputs.data_cache_prefix }}-${{ github.sha }}-
+      #       ${{ inputs.data_cache_prefix }}-
 
       - name: Setup Node.js environment
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
       - name: Enable corepack
         run: npm install -g corepack@latest && corepack enable pnpm
 
@@ -103,7 +104,8 @@ jobs:
         with:
           # Upload dist repository
           name: pages-artifact
-          path: './dist'
+          path: pages_dist
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
