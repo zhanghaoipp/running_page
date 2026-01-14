@@ -11,7 +11,7 @@ on:
       data_cache_prefix:
         required: true
         type: string
-        default: track_data
+        default: track_data_v2
   workflow_call:
     inputs:
       save_data_in_github_cache:
@@ -21,7 +21,7 @@ on:
       data_cache_prefix:
         required: true
         type: string
-        default: track_data
+        default: track_data_v2
 
 # Allow one concurrent deployment
 concurrency:
@@ -52,24 +52,24 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # - name: Cache Data Files
-      #   if: inputs.save_data_in_github_cache
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: |
-      #       activities
-      #       assets
-      #       GPX_OUT
-      #       TCX_OUT
-      #       FIT_OUT
-      #       Workouts
-      #       run_page/data.db
-      #       src/static/activities.json
-      #       imported.json
-      #     key: ${{ inputs.data_cache_prefix }}-${{ github.sha }}-${{ github.run_id }}
-      #     restore-keys: |
-      #       ${{ inputs.data_cache_prefix }}-${{ github.sha }}-
-      #       ${{ inputs.data_cache_prefix }}-
+      - name: Cache Data Files
+        if: inputs.save_data_in_github_cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            activities
+            assets
+            GPX_OUT
+            TCX_OUT
+            FIT_OUT
+            Workouts
+            run_page/data.db
+            src/static/activities.json
+            imported.json
+          key: ${{ inputs.data_cache_prefix }}-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ inputs.data_cache_prefix }}-${{ github.sha }}-
+            ${{ inputs.data_cache_prefix }}-
 
       - name: Setup Node.js environment
         uses: actions/setup-node@v4

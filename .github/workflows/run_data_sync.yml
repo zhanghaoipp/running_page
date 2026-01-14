@@ -201,10 +201,6 @@ jobs:
         run: |
           python run_page/db_updater.py
 
-      - name: Verify activities.json content
-        run: |
-          python -m json.tool src/static/activities.json |  grep "2026-01-13" || echo "MISSING!"
-
       - name: Make svg GitHub profile
         if: env.RUN_TYPE != 'pass'
         env:
